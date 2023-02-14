@@ -151,7 +151,8 @@ impl Keyboard {
         self.fitness = 0.0;
 
         let mut total_distance = 0;
-        let mut repeats = 0;
+        let mut repeat_fingers = 0;
+        let mut repeat_hands = 0;
         let mut distribution = [0; 8];
 
         let mut total_keys = 0;
@@ -179,25 +180,38 @@ impl Keyboard {
 
             self.finger_to_pos[i] = target;
 
-            if i == j {
-                repeats += 1;
+            if target != source {
+                if i == j {
+                    repeat_fingers += 1;
+                    repeat_hands += 1;
+                }
+                else if (i < 4 && j < 4) || (i >= 4 && j >= 4) {
+                    repeat_hands += 1;
+                }
             }
 
             j = i;
         });
         self.total_distance = total_distance;
 
-        let distance = 1.0 / ((total_distance as f32 / 1000.0) / total_keys as f32);
-        let repeats = repeats as f32 / total_keys as f32;
+        let distance_weight = 50.0;
+        let finger_weight = 1.0;
+        let hand_weight = 6.0;
+        let deviation_weight = 15.0;
+
+        let distance = total_keys as f32 / (total_distance as f32 / 1000.0) * distance_weight;
+        let repeat_fingers = total_keys as f32 / repeat_fingers as f32 * finger_weight;
+        let repeat_hands = total_keys as f32 / repeat_hands as f32 * hand_weight;
         let distribution = distribution.map(|value| {
             value as f32 / total_keys as f32
         });
-        let mut deviation = 0.0;
-        let desired_distribution = [0.09, 0.13, 0.14, 0.14, 0.14, 0.14, 0.13, 0.09];
+        let mut deviation = 1.0 * deviation_weight;
+        let desired_distribution = [0.0, 0.14, 0.14, 0.22, 0.22, 0.14, 0.14, 0.0];
         for i in 0..8 {
-            deviation += (desired_distribution[i] - distribution[i]).abs();
+            deviation -= (desired_distribution[i] - distribution[i]).abs() * deviation_weight;
         }
-        self.fitness = distance * 50.0 + (1.0 / repeats) + (1.75 - deviation) * 15.0;
+        //println!("{}, {}, {}, {}", distance, repeat_fingers, repeat_hands, deviation);
+        self.fitness = distance + repeat_fingers + repeat_hands + deviation;
     }
 
     fn mutate(&mut self) {
@@ -290,21 +304,50 @@ fn read_dataset(path: &str) -> String {
 fn main() {
     let string = Arc::new(read_dataset("data\\dataset.txt")[0..100000].to_owned());
 
+    // qwerty
+    let mut kb = Keyboard::from_layout([
+             'w', 'e', 'r', 't', 'y', 'u', 'i', 'o',
+        'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'p', 
+        'z', 'x', 'c', 'v',           'm', 'b', 'n', 'q', 
+    ]);
+    kb.fitness(&string);
+    println!("{}", kb.fitness);
+
+    // dvorak
+    let mut kb = Keyboard::from_layout([
+             'w', 'f', 'p', 'y', 'f', 'g', 'c', 'r',
+        'a', 'o', 'e', 'u', 'i', 'd', 'h', 't', 'n', 's', 
+        'l', 'q', 'j', 'k',           'm', 'w', 'v', 'z', 
+    ]);
+    kb.fitness(&string);
+    println!("{}", kb.fitness);
+
     // colemak
-    //let mut kb = Keyboard::from_layout([
-    //         'w', 'f', 'p', 'g', 'j', 'l', 'u', 'y',
-    //    'a', 'r', 's', 't', 'd', 'h', 'n', 'e', 'i', 'o', 
-    //    'z', 'x', 'c', 'v',           'm', 'k', 'b', 'q', 
-    //]);
-    //kb.fitness(&string);
-    //println!("{}", kb.fitness);
+    let mut kb = Keyboard::from_layout([
+             'w', 'f', 'p', 'g', 'j', 'l', 'u', 'y',
+        'a', 'r', 's', 't', 'd', 'h', 'n', 'e', 'i', 'o', 
+        'z', 'x', 'c', 'v',           'm', 'k', 'b', 'q', 
+    ]);
+    kb.fitness(&string);
+    println!("{}", kb.fitness);
+
+    // mine
+    let mut kb = Keyboard::from_layout([
+             'x', 'v', 'c', 'f', 'j', 'y', 'z', 'h',
+        's', 'r', 't', 'd', 'p', 'u', 'i', 'a', 'n', 'e', 
+        'g', 'l', 'm', 'w',           'k', 'o', 'b', 'q', 
+    ]);
+    kb.fitness(&string);
+    println!("{}", kb.fitness);
+
+    panic!();
 
     let mut population = Vec::new();
 
     let pool = ThreadPool::new(8);
     let (tx, rx) = mpsc::channel::<Keyboard>();
 
-    for _ in 0..10000 {
+    for _ in 0..100000 {
         let tx = tx.clone();
         let string = Arc::clone(&string);
         pool.execute(move || {
@@ -313,7 +356,7 @@ fn main() {
             tx.send(kb).expect("Awooga");
         });
     }
-    rx.iter().take(10000).for_each(|kb: Keyboard| {
+    rx.iter().take(100000).for_each(|kb: Keyboard| {
         population.push(kb);
     });
     
@@ -347,8 +390,8 @@ fn main() {
         println!("{:?}", population[0]);
         last_best = population[0].fitness;
 
-        population = population[0..100].to_vec();
-        for i in 0..100 {
+        population = population[0..1000].to_vec();
+        for i in 0..1000 {
             for _ in 0..9 {
                 let mut kb = population[i].clone();
                 let tx = tx.clone();
@@ -361,7 +404,7 @@ fn main() {
             }
         }
 
-        rx.iter().take(900).for_each(|kb: Keyboard| {
+        rx.iter().take(9000).for_each(|kb: Keyboard| {
             population.push(kb);
         });
 
