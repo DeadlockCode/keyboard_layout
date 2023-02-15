@@ -2,13 +2,8 @@ use std::fmt::Debug;
 use std::fs;
 
 use hashbrown::HashMap;
-use plotly::layout::ColorAxis;
 use rand::seq::SliceRandom;
 use rand::{self, Rng};
-use rand::rngs::ThreadRng;
-
-use plotly::{Plot, Scatter, Layout};
-use plotly::color::Rgb;
 
 use threadpool::ThreadPool;
 use std::sync::{mpsc, Arc};
@@ -147,7 +142,7 @@ impl Keyboard {
         }
     }
 
-    fn fitness(&mut self, string: &str) { // Lower is better
+    fn fitness(&mut self, string: &str) {
         self.fitness = 0.0;
 
         let mut total_distance = 0;
@@ -261,41 +256,6 @@ impl Debug for Keyboard {
     }
 }
 
-fn read_abstract_dataset(path: &str) -> String {
-    let mut data = String::new();
-
-    let file = fs::read_to_string(path).expect(format!("Could not open: \"{}\"", path).as_str());
-
-    let mut part = 0u32;
-    let mut depth = 0u32;
-
-    let mut last_ch = ' ';
-
-    for ch in file.chars() {
-
-        if ch == '"' {
-            depth = 1 - depth;
-
-            if last_ch == '"' {
-                data.push(ch);
-            }
-        }
-        else if depth == 0 && (ch == ',' || ch == '\n'){
-            part += 1;
-            if part % 3 == 0 {
-                data.push('\n');
-            }
-        }
-        else if depth == 1 && part % 3 == 2 {
-            data.push(ch.to_ascii_lowercase());
-        }
-
-        last_ch = ch;
-    }
-
-    data
-}
-
 fn read_dataset(path: &str) -> String {
     fs::read_to_string(path).expect(format!("Could not open: \"{}\"", path).as_str())
 }
@@ -304,47 +264,12 @@ fn read_dataset(path: &str) -> String {
 fn main() {
     let string = Arc::new(read_dataset("data\\dataset.txt")[0..100000].to_owned());
 
-    // qwerty
-    let mut kb = Keyboard::from_layout([
-             'w', 'e', 'r', 't', 'y', 'u', 'i', 'o',
-        'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'p', 
-        'z', 'x', 'c', 'v',           'm', 'b', 'n', 'q', 
-    ]);
-    kb.fitness(&string);
-    println!("{}", kb.fitness);
-
-    // dvorak
-    let mut kb = Keyboard::from_layout([
-             'w', 'f', 'p', 'y', 'f', 'g', 'c', 'r',
-        'a', 'o', 'e', 'u', 'i', 'd', 'h', 't', 'n', 's', 
-        'l', 'q', 'j', 'k',           'm', 'w', 'v', 'z', 
-    ]);
-    kb.fitness(&string);
-    println!("{}", kb.fitness);
-
-    // colemak
-    let mut kb = Keyboard::from_layout([
-             'w', 'f', 'p', 'g', 'j', 'l', 'u', 'y',
-        'a', 'r', 's', 't', 'd', 'h', 'n', 'e', 'i', 'o', 
-        'z', 'x', 'c', 'v',           'm', 'k', 'b', 'q', 
-    ]);
-    kb.fitness(&string);
-    println!("{}", kb.fitness);
-
-    // mine
-    let mut kb = Keyboard::from_layout([
-             'x', 'v', 'c', 'f', 'j', 'y', 'z', 'h',
-        's', 'r', 't', 'd', 'p', 'u', 'i', 'a', 'n', 'e', 
-        'g', 'l', 'm', 'w',           'k', 'o', 'b', 'q', 
-    ]);
-    kb.fitness(&string);
-    println!("{}", kb.fitness);
-
-    let mut population = Vec::new();
-
     let pool = ThreadPool::new(8);
     let (tx, rx) = mpsc::channel::<Keyboard>();
 
+    let mut population = Vec::new();
+
+    // Generate random population
     for _ in 0..1000 {
         let tx = tx.clone();
         let string = Arc::clone(&string);
@@ -357,77 +282,39 @@ fn main() {
     rx.iter().take(1000).for_each(|kb: Keyboard| {
         population.push(kb);
     });
-    
 
-    let mut generation = 0;
-    let mut fitness = Vec::new();
-    let mut distance = Vec::new();
-
-    let mut last_best = 0.0;
-    let mut no_improve = 0;
-
+    // Generation loop
     loop {
+        // Sorts the population based on fitness
         population.sort_by(|a, b| {
             a.fitness.partial_cmp(&b.fitness).unwrap().reverse()
         });
 
-        fitness.push(population[0].fitness);
-        distance.push(population[0].total_distance as f32 / 1000.0);
-
-        if last_best == population[0].fitness {
-            no_improve += 1;
-        }
-        else {
-            no_improve = 0;
-        }
-
-        if no_improve == 100 {
-            break;
-        }
-
+        // Prints the best keyboard
         println!("{:?}", population[0]);
-        last_best = population[0].fitness;
 
+        // Selects the 100 best from the population
         population = population[0..100].to_vec();
         for i in 0..100 {
             for _ in 0..9 {
+                // Clone keyboard
                 let mut kb = population[i].clone();
+
+                // Start Multithreading
                 let tx = tx.clone();
                 let string = Arc::clone(&string);
                 pool.execute(move || {
                     kb.mutate();
                     kb.fitness(&string);
-                    tx.send(kb).expect("Awooga");
+                    // Send the keyboard from worker thread to main thread
+                    tx.send(kb).expect("");
                 });
             }
         }
 
+        // Collect workerthread results
         rx.iter().take(900).for_each(|kb: Keyboard| {
             population.push(kb);
         });
-
-        generation += 1;
     }
-
-    
-    let mut plot_a = Plot::new();
-    plot_a.set_layout(Layout::new().width(1500).height(1000));
-    let fitness_trace = Scatter::new((0..generation).collect(), fitness.clone()).name("Fitness Score");
-    plot_a.add_trace(fitness_trace);
-    plot_a.write_html("fitness.html");
-
-    let mut plot_b = Plot::new();
-    plot_b.set_layout(Layout::new().width(1500).height(1000));
-    let distance_trace = Scatter::new((0..generation).collect(), distance.clone()).name("Distance Moved / 100 Letters");
-    plot_b.add_trace(distance_trace);
-    plot_b.write_html("distance.html");
-
-    let out: String = fitness.iter()
-        .map(|value| {value.to_string().replace('.', ",") + "\n"})
-        .collect::<String>();
-    fs::write("fitness.txt", out).unwrap();
-    let out: String = distance.iter()
-        .map(|value| {value.to_string().replace('.', ",") + "\n"})
-        .collect::<String>();
-    fs::write("distance.txt", out).unwrap();
 }
