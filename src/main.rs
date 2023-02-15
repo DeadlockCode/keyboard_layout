@@ -340,14 +340,12 @@ fn main() {
     kb.fitness(&string);
     println!("{}", kb.fitness);
 
-    panic!();
-
     let mut population = Vec::new();
 
     let pool = ThreadPool::new(8);
     let (tx, rx) = mpsc::channel::<Keyboard>();
 
-    for _ in 0..100000 {
+    for _ in 0..1000 {
         let tx = tx.clone();
         let string = Arc::clone(&string);
         pool.execute(move || {
@@ -356,7 +354,7 @@ fn main() {
             tx.send(kb).expect("Awooga");
         });
     }
-    rx.iter().take(100000).for_each(|kb: Keyboard| {
+    rx.iter().take(1000).for_each(|kb: Keyboard| {
         population.push(kb);
     });
     
@@ -390,8 +388,8 @@ fn main() {
         println!("{:?}", population[0]);
         last_best = population[0].fitness;
 
-        population = population[0..1000].to_vec();
-        for i in 0..1000 {
+        population = population[0..100].to_vec();
+        for i in 0..100 {
             for _ in 0..9 {
                 let mut kb = population[i].clone();
                 let tx = tx.clone();
@@ -404,7 +402,7 @@ fn main() {
             }
         }
 
-        rx.iter().take(9000).for_each(|kb: Keyboard| {
+        rx.iter().take(900).for_each(|kb: Keyboard| {
             population.push(kb);
         });
 
